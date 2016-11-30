@@ -11,13 +11,6 @@ import (
 	"time"
 )
 
-type Msg struct {
-	MsgId   uint64
-	MsgType uint32
-	Length  uint32
-	Buff    []byte
-}
-
 type Smux struct {
 	conn  net.Conn
 	state int64
