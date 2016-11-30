@@ -4,8 +4,8 @@ import (
 	"encoding/binary"
 	"errors"
 	"io"
-	"log"
 	"net"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -105,7 +105,7 @@ func (s *Smux) Dail() (*Conn, error) {
 	msg := &Msg{connId, MSG_CONNECT, 0, []byte{}}
 	s.sendBox <- msg
 
-	conn := NewConn(msg.MsgId, s.sendBox)
+	conn := NewConn(msg.ConnId, s.sendBox)
 
 	s.connsMu.Lock()
 	s.conns[connId] = conn
@@ -162,7 +162,7 @@ func (s *Smux) HandleLoop() {
 		for {
 			msg, err := s.recvMsg()
 
-			log.Println("recv msg", msg, err)
+			debugLog("recv msg", msg, err)
 
 			if err != nil {
 				if istimeout(err) {
@@ -174,20 +174,20 @@ func (s *Smux) HandleLoop() {
 			switch msg.MsgType {
 			case MSG_CONNECT:
 				// 加入 conn
-				conn := NewConn(msg.MsgId, s.sendBox)
+				conn := NewConn(msg.ConnId, s.sendBox)
 
 				s.connsMu.Lock()
-				s.conns[msg.MsgId] = conn
+				s.conns[msg.ConnId] = conn
 				s.connsMu.Unlock()
 
 				go conn.loop()
 				// 发送成功消息
-				s.sendBox <- &Msg{msg.MsgId, MSG_CONNECT_SUCCESS, 0, []byte{}}
+				s.sendBox <- &Msg{msg.ConnId, MSG_CONNECT_SUCCESS, 0, []byte{}}
 
 				select {
-				case s.accepts <- msg.MsgId:
+				case s.accepts <- msg.ConnId:
 				default:
-					s.sendBox <- &Msg{msg.MsgId, MSG_CONNECT_ERROR, 0, []byte{}}
+					s.sendBox <- &Msg{msg.ConnId, MSG_CONNECT_ERROR, 0, []byte{}}
 				}
 			case MSG_CONNECT_ERROR:
 				fallthrough
@@ -196,7 +196,7 @@ func (s *Smux) HandleLoop() {
 			case MSG_CONN:
 				// 内容
 				s.connsMu.Lock()
-				if conn, ok := s.conns[msg.MsgId]; ok {
+				if conn, ok := s.conns[msg.ConnId]; ok {
 					debugLog("loop recv", string(msg.Buff[:msg.Length]))
 					conn.recvChan <- msg
 				}
@@ -205,13 +205,15 @@ func (s *Smux) HandleLoop() {
 			case MSG_CLOSE:
 				// 被动关闭
 				s.connsMu.Lock()
-				if conn, ok := s.conns[msg.MsgId]; ok {
-					delete(s.conns, msg.MsgId)
+				if conn, ok := s.conns[msg.ConnId]; ok {
+					delete(s.conns, msg.ConnId)
 					conn.closeChan <- 1
 				}
 				s.connsMu.Unlock()
 			case MSG_KEEPALIVE:
 				// ignore
+			default:
+				panic("unknow msg type" + strconv.Itoa(int(msg.MsgType)))
 			}
 		}
 	}()
@@ -227,7 +229,7 @@ func (s *Smux) HandleLoop() {
 			// 如果是关闭连接
 			if msg.MsgType == MSG_CLOSE {
 				s.connsMu.Lock()
-				delete(s.conns, msg.MsgId)
+				delete(s.conns, msg.ConnId)
 				s.connsMu.Unlock()
 			}
 		case <-time.After(s.keepAliveTimeout):
@@ -247,7 +249,7 @@ func (s *Smux) recvMsg() (*Msg, error) {
 	}
 
 	msg := &Msg{}
-	msg.MsgId = binary.BigEndian.Uint64(header)
+	msg.ConnId = binary.BigEndian.Uint64(header)
 	msg.MsgType = binary.BigEndian.Uint32(header[8:])
 	msg.Length = binary.BigEndian.Uint32(header[12:])
 	msg.Buff = make([]byte, msg.Length)
@@ -263,7 +265,7 @@ func (s *Smux) recvMsg() (*Msg, error) {
 
 func (s *Smux) sendMsg(msg *Msg) error {
 	buff := make([]byte, msg.Length+16)
-	binary.BigEndian.PutUint64(buff, msg.MsgId)
+	binary.BigEndian.PutUint64(buff, msg.ConnId)
 	binary.BigEndian.PutUint32(buff[8:], msg.MsgType)
 	binary.BigEndian.PutUint32(buff[12:], msg.Length)
 	copy(buff[16:], msg.Buff)
