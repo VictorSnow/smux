@@ -1,4 +1,4 @@
-package main
+package smux
 
 const (
 	MSG_CONNECT         = 1

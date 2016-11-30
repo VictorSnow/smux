@@ -1,11 +1,12 @@
-package main
+package smux
 
 import (
 	"log"
+	"testing"
 	"time"
 )
 
-func main() {
+func Test_main(t testing.T) {
 	client := NewSmux("127.0.0.1:8099", "client")
 	server := NewSmux("127.0.0.1:8099", "server")
 
