@@ -192,16 +192,15 @@ func (s *Smux) HandleLoop() {
 				// 加入 conn
 				conn := NewConn(msg.ConnId, s.sendBox)
 
-				s.connsMu.Lock()
-				s.conns[msg.ConnId] = conn
-				s.connsMu.Unlock()
-
-				go conn.loop()
-				// 发送成功消息
-				s.sendBox <- &Msg{msg.ConnId, MSG_CONNECT_SUCCESS, 0, []byte{}}
-
 				select {
 				case s.accepts <- msg.ConnId:
+					// 发送成功消息
+					s.sendBox <- &Msg{msg.ConnId, MSG_CONNECT_SUCCESS, 0, []byte{}}
+					s.connsMu.Lock()
+					s.conns[msg.ConnId] = conn
+					s.connsMu.Unlock()
+
+					go conn.loop()
 				default:
 					s.sendBox <- &Msg{msg.ConnId, MSG_CONNECT_ERROR, 0, []byte{}}
 				}
