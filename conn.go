@@ -19,6 +19,17 @@ type Conn struct {
 	buffState chan int     // 缓存是否有内容
 }
 
+func NewConn(connId uint64, sendBox chan *Msg) *Conn {
+	return &Conn{
+		connId:    connId,
+		recvChan:  make(chan *Msg, 20),
+		sendBox:   sendBox,
+		closeChan: make(chan int),
+		state:     STATE_ACTIVE,
+		recvBuff:  bytes.Buffer{},
+		buffState: make(chan int)}
+}
+
 func (c *Conn) loop() {
 	defer close(c.recvChan)
 	defer close(c.closeChan)

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"encoding/binary"
 	"errors"
 	"io"
@@ -113,7 +112,7 @@ func (s *Smux) Dail() (*Conn, error) {
 	msg := &Msg{connId, MSG_CONNECT, 0, []byte{}}
 	s.sendBox <- msg
 
-	conn := &Conn{connId, make(chan *Msg, 20), s.sendBox, make(chan int), STATE_ACTIVE, bytes.Buffer{}, make(chan int)}
+	conn := NewConn(msg.MsgId, s.sendBox)
 
 	s.connsMu.Lock()
 	s.conns[connId] = conn
@@ -182,7 +181,7 @@ func (s *Smux) HandleLoop() {
 			switch msg.MsgType {
 			case MSG_CONNECT:
 				// 加入 conn
-				conn := &Conn{msg.MsgId, make(chan *Msg, 20), s.sendBox, make(chan int), STATE_ACTIVE, bytes.Buffer{}, make(chan int)}
+				conn := NewConn(msg.MsgId, s.sendBox)
 
 				s.connsMu.Lock()
 				s.conns[msg.MsgId] = conn
