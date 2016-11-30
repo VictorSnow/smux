@@ -6,16 +6,17 @@ import (
 	"time"
 )
 
-func Test_main(t testing.T) {
+func Test_main(t *testing.T) {
 	client := NewSmux("127.0.0.1:8099", "client")
 	server := NewSmux("127.0.0.1:8099", "server")
 
-	go server.start()
+	go server.Start()
+	go client.Start()
 
 	go func() {
 		for {
 			buff := make([]byte, 2048)
-			conn := server.Accept()
+			conn := client.Accept()
 			n, err := conn.Recv(buff)
 			log.Println("server loop", string(buff[:n]), err)
 			conn.Send(buff[:n])
@@ -24,9 +25,7 @@ func Test_main(t testing.T) {
 
 	time.Sleep(time.Second)
 
-	client.start()
-
-	c, err := client.Dail()
+	c, err := server.Dail()
 	log.Println(c, err)
 
 	c.Send([]byte("hello world"))

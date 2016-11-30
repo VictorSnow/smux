@@ -54,7 +54,7 @@ func NewSmux(addr string, mode string) *Smux {
 	}
 }
 
-func (s *Smux) start() {
+func (s *Smux) Start() {
 	if s.mode == "server" {
 		s.startServer()
 	} else {
