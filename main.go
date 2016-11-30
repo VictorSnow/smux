@@ -6,10 +6,10 @@ import (
 )
 
 func main() {
-	client := NewSmux("127.0.0.1:8099")
-	server := NewSmux("127.0.0.1:8099")
+	client := NewSmux("127.0.0.1:8099", "client")
+	server := NewSmux("127.0.0.1:8099", "server")
 
-	go server.startServer()
+	go server.start()
 
 	go func() {
 		for {
@@ -23,8 +23,7 @@ func main() {
 
 	time.Sleep(time.Second)
 
-	err := client.startClient()
-	log.Println(err)
+	client.start()
 
 	c, err := client.Dail()
 	log.Println(c, err)

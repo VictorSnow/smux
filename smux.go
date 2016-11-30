@@ -22,6 +22,7 @@ type Smux struct {
 	keepAliveTimeout time.Duration
 
 	connId uint64
+	idStep uint64
 
 	sendBox chan *Msg
 
@@ -31,18 +32,33 @@ type Smux struct {
 	accepts chan uint64
 }
 
-func NewSmux(addr string) *Smux {
+func NewSmux(addr string, mode string) *Smux {
+	connId := 1
+	if mode == "server" {
+		connId = 2
+	}
+
 	return &Smux{
 		conn:             nil,
 		state:            STATE_CLOSE,
 		addr:             addr,
+		mode:             mode,
 		dailTimeout:      5 * time.Second,
 		keepAliveTimeout: 10 * time.Second,
-		connId:           1,
+		connId:           uint64(connId),
+		idStep:           2,
 		sendBox:          make(chan *Msg, 2048),
 		conns:            make(map[uint64]*Conn),
 		connsMu:          sync.Mutex{},
 		accepts:          make(chan uint64, 30),
+	}
+}
+
+func (s *Smux) start() {
+	if s.mode == "server" {
+		s.startServer()
+	} else {
+		s.startClient()
 	}
 }
 
@@ -101,7 +117,7 @@ func (s *Smux) startClient() error {
 }
 
 func (s *Smux) Dail() (*Conn, error) {
-	connId := atomic.AddUint64(&s.connId, 1)
+	connId := atomic.AddUint64(&s.connId, s.idStep)
 	msg := &Msg{connId, MSG_CONNECT, 0, []byte{}}
 	s.sendBox <- msg
 
