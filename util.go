@@ -10,3 +10,9 @@ func istimeout(e error) bool {
 	}
 	return false
 }
+
+func nodelay(c net.Conn) {
+	if tc, ok := c.(*net.TCPConn); ok {
+		tc.SetNoDelay(true)
+	}
+}

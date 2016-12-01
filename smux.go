@@ -30,6 +30,8 @@ type Smux struct {
 	connsMu sync.Mutex
 
 	accepts chan uint64
+
+	nodelay bool
 }
 
 func NewSmux(addr string, mode string) *Smux {
@@ -51,6 +53,7 @@ func NewSmux(addr string, mode string) *Smux {
 		conns:            make(map[uint64]*Conn),
 		connsMu:          sync.Mutex{},
 		accepts:          make(chan uint64, 30),
+		nodelay:          true,
 	}
 }
 
@@ -89,6 +92,10 @@ func (s *Smux) startServer() {
 		}
 
 		s.conn = conn
+		if s.nodelay {
+			nodelay(s.conn)
+		}
+
 		go s.HandleLoop()
 	}
 }
@@ -108,10 +115,15 @@ func (s *Smux) startClient() error {
 	s.mode = "client"
 	conn, err := net.DialTimeout("tcp", s.addr, s.dailTimeout)
 	if err != nil {
+		debugLog("dial server failed", err)
 		return err
 	}
 
 	s.conn = conn
+	if s.nodelay {
+		nodelay(s.conn)
+	}
+
 	go s.HandleLoop()
 	return nil
 }
@@ -171,6 +183,8 @@ func (s *Smux) HandleLoop() {
 
 		s.conn.Close()
 		atomic.StoreInt64(&s.state, STATE_CLOSE)
+
+		debugLog("loop closed")
 	}()
 
 	// 接受消息
@@ -178,7 +192,7 @@ func (s *Smux) HandleLoop() {
 		for {
 			msg, err := s.recvMsg()
 
-			debugLog("recv msg", msg, err)
+			debugLog(s.mode, "recv msg", msg, err)
 
 			if err != nil {
 				if istimeout(err) {
@@ -194,13 +208,15 @@ func (s *Smux) HandleLoop() {
 
 				select {
 				case s.accepts <- msg.ConnId:
-					// 发送成功消息
-					s.sendBox <- &Msg{msg.ConnId, MSG_CONNECT_SUCCESS, 0, []byte{}}
 					s.connsMu.Lock()
 					s.conns[msg.ConnId] = conn
 					s.connsMu.Unlock()
 
 					go conn.loop()
+
+					// 发送成功消息
+					s.sendBox <- &Msg{msg.ConnId, MSG_CONNECT_SUCCESS, 0, []byte{}}
+
 				default:
 					s.sendBox <- &Msg{msg.ConnId, MSG_CONNECT_ERROR, 0, []byte{}}
 				}
@@ -238,6 +254,7 @@ func (s *Smux) HandleLoop() {
 		case msg := <-s.sendBox:
 			err := s.sendMsg(msg)
 			if err != nil {
+				errorLog("send conn failed", err)
 				break
 			}
 			// 如果是关闭连接
@@ -259,6 +276,7 @@ func (s *Smux) recvMsg() (*Msg, error) {
 	header := make([]byte, 16)
 	_, err := io.ReadFull(s.conn, header)
 	if err != nil {
+		debugLog(s.mode, "read header failed")
 		return nil, err
 	}
 
@@ -271,6 +289,7 @@ func (s *Smux) recvMsg() (*Msg, error) {
 	if msg.Length > 0 {
 		_, err = io.ReadFull(s.conn, msg.Buff)
 		if err != nil {
+			debugLog(s.mode, "read content failed")
 			return nil, err
 		}
 	}
@@ -282,13 +301,17 @@ func (s *Smux) sendMsg(msg *Msg) error {
 	binary.BigEndian.PutUint64(buff, msg.ConnId)
 	binary.BigEndian.PutUint32(buff[8:], msg.MsgType)
 	binary.BigEndian.PutUint32(buff[12:], msg.Length)
-	copy(buff[16:], msg.Buff)
+	if msg.Length > 0 {
+		copy(buff[16:], msg.Buff)
+	}
 
 	n, err := s.conn.Write(buff)
 	if err != nil {
+		debugLog(s.mode, "content send failed")
 		return err
 	}
 	if n != len(buff) {
+		debugLog(s.mode, "content not full send")
 		return errors.New("content not match")
 	}
 	return nil
