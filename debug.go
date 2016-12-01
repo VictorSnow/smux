@@ -1,13 +1,11 @@
 package smux
 
-import (
-	"log"
-)
+//"log"
 
 func errorLog(v ...interface{}) {
-	log.Println(v)
+	//log.Println(v)
 }
 
 func debugLog(v ...interface{}) {
-	log.Println(v)
+	//log.Println(v)
 }
