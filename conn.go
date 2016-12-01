@@ -65,11 +65,15 @@ func (c *Conn) Close() error {
 }
 
 func (c *Conn) Write(buff []byte) (int, error) {
-	msg := &Msg{c.connId, MSG_CONN, uint32(len(buff)), buff}
+	// copy slice
+	tbuff := make([]byte, len(buff))
+	copy(tbuff, buff)
+
+	msg := &Msg{c.connId, MSG_CONN, uint32(len(tbuff)), tbuff}
 
 	if atomic.LoadInt64(&c.state) == STATE_ACTIVE {
 		c.sendBox <- msg
-		return len(buff), nil
+		return len(tbuff), nil
 	}
 	return 0, errors.New("conn closed")
 }
