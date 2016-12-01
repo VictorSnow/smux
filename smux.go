@@ -20,12 +20,12 @@ type Smux struct {
 	// timeout
 	dailTimeout      time.Duration
 	keepAliveTimeout time.Duration
-
+	// id
 	connId uint64
 	idStep uint64
-
+	// send msg chan
 	sendBox chan *Msg
-
+	// conn collection
 	conns   map[uint64]*Conn
 	connsMu sync.Mutex
 
@@ -133,21 +133,18 @@ func (s *Smux) Dail() (*Conn, error) {
 	msg := &Msg{connId, MSG_CONNECT, 0, []byte{}}
 	s.sendBox <- msg
 
-	conn := NewConn(msg.ConnId, s.sendBox)
+	conn := NewConn(msg.ConnId, s)
 
 	s.connsMu.Lock()
 	s.conns[connId] = conn
 	s.connsMu.Unlock()
 
-	go conn.loop()
-
 	select {
-	case msg := <-conn.recvChan:
-		switch msg.MsgType {
-		case MSG_CONNECT_ERROR:
-			return nil, errors.New("connect error")
-		case MSG_CONNECT_SUCCESS:
+	case isSuccess := <-conn.dialChan:
+		if isSuccess {
 			return conn, nil
+		} else {
+			return nil, errors.New("connect error")
 		}
 	case <-time.After(s.dailTimeout):
 		return nil, errors.New("dail timeout")
@@ -204,15 +201,13 @@ func (s *Smux) HandleLoop() {
 			switch msg.MsgType {
 			case MSG_CONNECT:
 				// 加入 conn
-				conn := NewConn(msg.ConnId, s.sendBox)
+				conn := NewConn(msg.ConnId, s)
 
 				select {
 				case s.accepts <- msg.ConnId:
 					s.connsMu.Lock()
 					s.conns[msg.ConnId] = conn
 					s.connsMu.Unlock()
-
-					go conn.loop()
 
 					// 发送成功消息
 					s.sendBox <- &Msg{msg.ConnId, MSG_CONNECT_SUCCESS, 0, []byte{}}
@@ -237,7 +232,6 @@ func (s *Smux) HandleLoop() {
 				s.connsMu.Lock()
 				if conn, ok := s.conns[msg.ConnId]; ok {
 					conn.closeChan <- 1
-					delete(s.conns, msg.ConnId)
 				}
 				s.connsMu.Unlock()
 			case MSG_KEEPALIVE:
@@ -307,10 +301,12 @@ func (s *Smux) sendMsg(msg *Msg) error {
 
 	n, err := s.conn.Write(buff)
 	if err != nil {
+		panic("content send fail")
 		debugLog(s.mode, "content send failed")
 		return err
 	}
 	if n != len(buff) {
+		panic("content not full send")
 		debugLog(s.mode, "content not full send")
 		return errors.New("content not match")
 	}

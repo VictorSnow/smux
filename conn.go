@@ -1,9 +1,7 @@
 package smux
 
 import (
-	"bytes"
 	"errors"
-	"io"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -12,60 +10,66 @@ import (
 type Conn struct {
 	connId   uint64    // 当前链接ID
 	recvChan chan *Msg // 接收通道
-	sendBox  chan *Msg // 发送通道
 
 	closeChan chan int
 	state     int64 // 当前连接状态
 	mu        sync.Mutex
 
-	recvBuff  bytes.Buffer // 接收缓存
-	buffState *sync.Cond   // 缓存是否有内容
-	timeAlive time.Duration
+	recvBuff  *WaitableBuff // 接收缓存
+	timeAlive time.Duration // 生存时间
+
+	dialChan chan bool
+	s        *Smux
 }
 
-func NewConn(connId uint64, sendBox chan *Msg) *Conn {
-	locker := &sync.Mutex{}
+func NewConn(connId uint64, s *Smux) *Conn {
 
-	return &Conn{
+	conn := &Conn{
 		connId:    connId,
-		recvChan:  make(chan *Msg, 50),
-		sendBox:   sendBox,
+		recvChan:  make(chan *Msg, 1024),
 		closeChan: make(chan int),
 		state:     STATE_ACTIVE,
 		mu:        sync.Mutex{},
-		recvBuff:  bytes.Buffer{},
-		buffState: sync.NewCond(locker),
-		timeAlive: time.Second * 120}
+		recvBuff:  NewWaitableBuff(),
+		timeAlive: time.Second * 120,
+		dialChan:  make(chan bool),
+		s:         s}
+
+	go conn.loop()
+	return conn
 }
 
 func (c *Conn) loop() {
-	defer close(c.recvChan)
-	defer close(c.closeChan)
-
 	for {
 		select {
 		case msg := <-c.recvChan:
+			if msg == nil {
+				return
+			}
+
 			switch msg.MsgType {
 			case MSG_CONN:
-				c.recvBuff.Write(msg.Buff)
-				c.notifyBuffer()
+				if msg.Length > 0 {
+					c.recvBuff.Write(msg.Buff)
+				}
+			case MSG_CONNECT_SUCCESS:
+				c.dialChan <- true
+			case MSG_CONNECT_ERROR:
+				c.dialChan <- false
+				c.Close(false)
 			}
 		case i := <-c.closeChan:
-			atomic.SwapInt64(&c.state, STATE_CLOSE)
-			if i == 0 {
-				msg := &Msg{c.connId, MSG_CLOSE, 0, []byte{}}
-				c.sendBox <- msg
-			}
-			c.notifyBuffer()
+			// need close remote
+			c.Close(i == 0)
 			return
 		case <-time.After(c.timeAlive):
-			c.Close()
+			c.Close(true)
 			return
 		}
 	}
 }
 
-func (c *Conn) Close() {
+func (c *Conn) Close(closeRemote bool) {
 	if atomic.LoadInt64(&c.state) == STATE_CLOSE {
 		return
 	}
@@ -77,12 +81,24 @@ func (c *Conn) Close() {
 		return
 	}
 
-	select {
-	case c.closeChan <- 0:
-		return
-	default:
-		return
+	atomic.SwapInt64(&c.state, STATE_CLOSE)
+
+	c.s.connsMu.Lock()
+	delete(c.s.conns, c.connId)
+	c.s.connsMu.Unlock()
+
+	if closeRemote {
+		msg := &Msg{c.connId, MSG_CLOSE, 0, []byte{}}
+		c.s.sendBox <- msg
 	}
+
+	c.recvBuff.Close()
+	c.s = nil
+
+	// 清理数据
+	close(c.recvChan)
+	close(c.closeChan)
+	close(c.dialChan)
 }
 
 func (c *Conn) Write(buff []byte) (int, error) {
@@ -93,31 +109,12 @@ func (c *Conn) Write(buff []byte) (int, error) {
 	msg := &Msg{c.connId, MSG_CONN, uint32(len(tbuff)), tbuff}
 
 	if atomic.LoadInt64(&c.state) == STATE_ACTIVE {
-		c.sendBox <- msg
+		c.s.sendBox <- msg
 		return len(tbuff), nil
 	}
 	return 0, errors.New("conn closed")
 }
 
 func (c *Conn) Read(buff []byte) (int, error) {
-	n, err := c.recvBuff.Read(buff)
-	if n == 0 && err == io.EOF {
-		if atomic.LoadInt64(&c.state) == STATE_ACTIVE {
-			c.waitBuffer()
-			return c.Read(buff)
-		}
-	}
-	return n, err
-}
-
-func (c *Conn) notifyBuffer() {
-	c.buffState.L.Lock()
-	c.buffState.Signal()
-	c.buffState.L.Unlock()
-}
-
-func (c *Conn) waitBuffer() {
-	c.buffState.L.Lock()
-	c.buffState.Wait()
-	c.buffState.L.Unlock()
+	return c.recvBuff.Read(buff)
 }
