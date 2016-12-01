@@ -22,7 +22,7 @@ type Conn struct {
 func NewConn(connId uint64, sendBox chan *Msg) *Conn {
 	return &Conn{
 		connId:    connId,
-		recvChan:  make(chan *Msg, 20),
+		recvChan:  make(chan *Msg, 50),
 		sendBox:   sendBox,
 		closeChan: make(chan int),
 		state:     STATE_ACTIVE,
@@ -48,8 +48,8 @@ func (c *Conn) loop() {
 		case msg := <-c.recvChan:
 			switch msg.MsgType {
 			case MSG_CONN:
-				c.notifyBuffer()
 				c.recvBuff.Write(msg.Buff)
+				c.notifyBuffer()
 			}
 		}
 	}
@@ -75,17 +75,14 @@ func (c *Conn) Write(buff []byte) (int, error) {
 }
 
 func (c *Conn) Read(buff []byte) (int, error) {
-retry:
-	if atomic.LoadInt64(&c.state) == STATE_ACTIVE {
-		n, err := c.recvBuff.Read(buff)
-		if n == 0 && err == io.EOF {
+	n, err := c.recvBuff.Read(buff)
+	if n == 0 && err == io.EOF {
+		if atomic.LoadInt64(&c.state) == STATE_ACTIVE {
 			c.waitBuffer()
-			goto retry
+			return c.Read(buff)
 		}
-		debugLog("conn recv", string(buff[:n]), err)
-		return n, err
 	}
-	return 0, errors.New("conn closed")
+	return n, err
 }
 
 func (c *Conn) notifyBuffer() {
