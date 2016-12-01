@@ -47,7 +47,6 @@ func (c *Conn) loop() {
 		case msg := <-c.recvChan:
 			switch msg.MsgType {
 			case MSG_CONN:
-				debugLog("conn recv", string(msg.Buff[:msg.Length]))
 				c.notifyBuffer()
 				c.recvBuff.Write(msg.Buff)
 			}
@@ -64,8 +63,11 @@ func (c *Conn) Close() error {
 	}
 }
 
-func (c *Conn) Send(buff []byte) (int, error) {
+func (c *Conn) Write(buff []byte) (int, error) {
 	msg := &Msg{c.connId, MSG_CONN, uint32(len(buff)), buff}
+
+	debugLog("conn send", msg)
+
 	if atomic.LoadInt64(&c.state) == STATE_ACTIVE {
 		c.sendBox <- msg
 		return len(buff), nil
@@ -73,15 +75,15 @@ func (c *Conn) Send(buff []byte) (int, error) {
 	return 0, errors.New("conn closed")
 }
 
-func (c *Conn) Recv(buff []byte) (int, error) {
+func (c *Conn) Read(buff []byte) (int, error) {
 	if atomic.LoadInt64(&c.state) == STATE_ACTIVE {
 	retry:
 		n, err := c.recvBuff.Read(buff)
-		if err == io.EOF {
+		if n == 0 && err == io.EOF {
 			c.waitBuffer()
 			goto retry
 		}
-
+		debugLog("conn recv", string(buff[:n]), err)
 		return n, err
 	}
 	return 0, errors.New("conn closed")

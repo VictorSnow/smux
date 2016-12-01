@@ -212,7 +212,6 @@ func (s *Smux) HandleLoop() {
 				// 内容
 				s.connsMu.Lock()
 				if conn, ok := s.conns[msg.ConnId]; ok {
-					debugLog("loop recv", string(msg.Buff[:msg.Length]))
 					conn.recvChan <- msg
 				}
 				s.connsMu.Unlock()
@@ -221,8 +220,8 @@ func (s *Smux) HandleLoop() {
 				// 被动关闭
 				s.connsMu.Lock()
 				if conn, ok := s.conns[msg.ConnId]; ok {
-					delete(s.conns, msg.ConnId)
 					conn.closeChan <- 1
+					delete(s.conns, msg.ConnId)
 				}
 				s.connsMu.Unlock()
 			case MSG_KEEPALIVE:

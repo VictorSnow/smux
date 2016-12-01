@@ -12,5 +12,8 @@ type Msg struct {
 }
 
 func (msg *Msg) String() string {
-	return "connId=" + strconv.Itoa(int(msg.ConnId)) + " msgType=" + strconv.Itoa(int(msg.MsgType)) + " content=" + string(msg.Buff[:msg.Length])
+	return "connId=" + strconv.Itoa(int(msg.ConnId)) +
+		" msgType=" + strconv.Itoa(int(msg.MsgType)) +
+		" length=" + strconv.Itoa(int(msg.Length)) //+
+	//" content=" + string(msg.Buff[:msg.Length])
 }
