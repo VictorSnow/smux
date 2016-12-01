@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"sync"
 	"sync/atomic"
+	"time"
 )
 
 type Conn struct {
@@ -14,29 +16,40 @@ type Conn struct {
 
 	closeChan chan int
 	state     int64 // 当前连接状态
+	mu        sync.Mutex
 
 	recvBuff  bytes.Buffer // 接收缓存
-	buffState chan int     // 缓存是否有内容
+	buffState *sync.Cond   // 缓存是否有内容
+	timeAlive time.Duration
 }
 
 func NewConn(connId uint64, sendBox chan *Msg) *Conn {
+	locker := &sync.Mutex{}
+
 	return &Conn{
 		connId:    connId,
 		recvChan:  make(chan *Msg, 50),
 		sendBox:   sendBox,
 		closeChan: make(chan int),
 		state:     STATE_ACTIVE,
+		mu:        sync.Mutex{},
 		recvBuff:  bytes.Buffer{},
-		buffState: make(chan int)}
+		buffState: sync.NewCond(locker),
+		timeAlive: time.Second * 120}
 }
 
 func (c *Conn) loop() {
 	defer close(c.recvChan)
 	defer close(c.closeChan)
-	defer close(c.buffState)
 
 	for {
 		select {
+		case msg := <-c.recvChan:
+			switch msg.MsgType {
+			case MSG_CONN:
+				c.recvBuff.Write(msg.Buff)
+				c.notifyBuffer()
+			}
 		case i := <-c.closeChan:
 			atomic.SwapInt64(&c.state, STATE_CLOSE)
 			if i == 0 {
@@ -44,23 +57,31 @@ func (c *Conn) loop() {
 				c.sendBox <- msg
 			}
 			c.notifyBuffer()
-			break
-		case msg := <-c.recvChan:
-			switch msg.MsgType {
-			case MSG_CONN:
-				c.recvBuff.Write(msg.Buff)
-				c.notifyBuffer()
-			}
+			return
+		case <-time.After(c.timeAlive):
+			c.Close()
+			return
 		}
 	}
 }
 
-func (c *Conn) Close() error {
+func (c *Conn) Close() {
+	if atomic.LoadInt64(&c.state) == STATE_CLOSE {
+		return
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if atomic.LoadInt64(&c.state) == STATE_CLOSE {
+		return
+	}
+
 	select {
 	case c.closeChan <- 0:
-		return nil
+		return
 	default:
-		return errors.New("close fail")
+		return
 	}
 }
 
@@ -90,11 +111,13 @@ func (c *Conn) Read(buff []byte) (int, error) {
 }
 
 func (c *Conn) notifyBuffer() {
-	select {
-	case c.buffState <- 1:
-	}
+	c.buffState.L.Lock()
+	c.buffState.Signal()
+	c.buffState.L.Unlock()
 }
 
 func (c *Conn) waitBuffer() {
-	<-c.buffState
+	c.buffState.L.Lock()
+	c.buffState.Wait()
+	c.buffState.L.Unlock()
 }
