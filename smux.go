@@ -3,7 +3,6 @@ package smux
 import (
 	"encoding/binary"
 	"errors"
-	"io"
 	"net"
 	"strconv"
 	"sync"
@@ -260,12 +259,7 @@ func (s *Smux) HandleLoop() {
 			case <-closeChan:
 				return
 			case msg := <-s.sendBox:
-			retry:
 				err := s.sendMsg(msg)
-				// retry to send msg
-				if istimeout(err) {
-					goto retry
-				}
 
 				if err != nil {
 					errorLog("send conn failed", err)
@@ -288,9 +282,32 @@ func (s *Smux) HandleLoop() {
 	wg.Wait()
 }
 
+func (s *Smux) readFull(buff []byte) (int, error) {
+	min := len(buff)
+	m := 0
+
+	if min == 0 {
+		return 0, nil
+	}
+
+	for {
+		n, err := s.conn.Read(buff)
+		if err != nil && !istimeout(err) {
+			return 0, err
+		}
+		m += n
+		if m >= min {
+			return m, nil
+		} else {
+			buff = buff[n:]
+		}
+	}
+	return 0, errors.New("unexcept end")
+}
+
 func (s *Smux) recvMsg() (*Msg, error) {
 	header := make([]byte, 16)
-	_, err := io.ReadFull(s.conn, header)
+	_, err := s.readFull(header)
 	if err != nil {
 		return nil, err
 	}
@@ -302,7 +319,7 @@ func (s *Smux) recvMsg() (*Msg, error) {
 	msg.Buff = make([]byte, msg.Length)
 
 	if msg.Length > 0 {
-		_, err = io.ReadFull(s.conn, msg.Buff)
+		_, err = s.readFull(msg.Buff)
 		if err != nil {
 			return nil, err
 		}
@@ -318,9 +335,16 @@ func (s *Smux) sendMsg(msg *Msg) error {
 	if msg.Length > 0 {
 		copy(buff[16:], msg.Buff)
 	}
-
+retry:
 	n, err := s.conn.Write(buff)
 	if err != nil {
+		if istimeout(err) {
+			if n != 0 {
+				panic("unexcepted timeout send")
+			}
+			goto retry
+		}
+
 		return err
 	}
 	if n != len(buff) {
