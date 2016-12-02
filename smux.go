@@ -188,9 +188,15 @@ func (s *Smux) HandleLoop() {
 		atomic.StoreInt64(&s.state, STATE_CLOSE)
 	}()
 
+	closeChan := make(chan int)
+
 	// 接受消息
 	go func() {
 		for {
+			defer func() {
+				closeChan <- 1
+			}()
+
 			msg, err := s.recvMsg()
 
 			debugLog(s.mode, "recv msg", msg, err)
@@ -244,6 +250,8 @@ func (s *Smux) HandleLoop() {
 	// 发送消息
 	for {
 		select {
+		case <-closeChan:
+			return
 		case msg := <-s.sendBox:
 		retry:
 			err := s.sendMsg(msg)
@@ -254,7 +262,7 @@ func (s *Smux) HandleLoop() {
 
 			if err != nil {
 				errorLog("send conn failed", err)
-				break
+				return
 			}
 			// 如果是关闭连接
 			if msg.MsgType == MSG_CLOSE {
