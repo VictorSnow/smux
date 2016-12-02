@@ -245,7 +245,13 @@ func (s *Smux) HandleLoop() {
 	for {
 		select {
 		case msg := <-s.sendBox:
+		retry:
 			err := s.sendMsg(msg)
+			// retry to send msg
+			if istimeout(err) {
+				goto retry
+			}
+
 			if err != nil {
 				errorLog("send conn failed", err)
 				break
