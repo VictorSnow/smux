@@ -167,24 +167,23 @@ func (s *Smux) HandleLoop() {
 
 	defer func() {
 		atomic.StoreInt64(&s.state, STATE_CLOSING)
-
-		// clear sequence
-		for {
-			select {
-			case <-s.accepts:
-			case <-s.sendBox:
-			default:
-				break
-			}
-		}
+		s.conn.Close()
 
 		// 关闭链接
 		for _, v := range s.conns {
 			v.Close(false)
 		}
+	L:
+		for {
+			select {
+			case <-s.accepts:
+			case <-s.sendBox:
+			default:
+				break L
+			}
+		}
 
 		s.conns = make(map[uint64]*Conn)
-		s.conn.Close()
 		atomic.StoreInt64(&s.state, STATE_CLOSE)
 	}()
 
