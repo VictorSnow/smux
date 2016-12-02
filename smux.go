@@ -187,7 +187,8 @@ func (s *Smux) HandleLoop() {
 		atomic.StoreInt64(&s.state, STATE_CLOSE)
 	}()
 
-	closeChan := make(chan int)
+	closeChan := make(chan int, 2)
+	defer close(closeChan)
 
 	// 接受消息
 	go func() {
