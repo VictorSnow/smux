@@ -187,7 +187,7 @@ func (s *Smux) HandleLoop() {
 		atomic.StoreInt64(&s.state, STATE_CLOSE)
 	}()
 
-	closeChan := make(chan int, 2)
+	closeChan := make(chan int)
 	defer close(closeChan)
 
 	wg := sync.WaitGroup{}
@@ -196,12 +196,11 @@ func (s *Smux) HandleLoop() {
 	// 接受消息
 	go func() {
 		defer wg.Done()
+		defer func() {
+			closeChan <- 1
+		}()
 
 		for {
-			defer func() {
-				closeChan <- 1
-			}()
-
 			msg, err := s.recvMsg()
 
 			debugLog(s.mode, "recv msg", msg, err)
@@ -254,8 +253,8 @@ func (s *Smux) HandleLoop() {
 
 	// 发送消息
 	go func() {
+		defer wg.Done()
 		for {
-			defer wg.Done()
 
 			select {
 			case <-closeChan:
