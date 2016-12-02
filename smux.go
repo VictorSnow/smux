@@ -147,6 +147,7 @@ func (s *Smux) Dail() (*Conn, error) {
 			return nil, errors.New("connect error")
 		}
 	case <-time.After(s.dailTimeout):
+		conn.Close(false)
 		return nil, errors.New("dail timeout")
 	}
 
@@ -171,17 +172,12 @@ func (s *Smux) HandleLoop() {
 
 		// 关闭链接
 		for _, v := range s.conns {
-			select {
-			case v.closeChan <- 0:
-			}
+			v.Close(false)
 		}
 
 		s.conns = make(map[uint64]*Conn)
-
 		s.conn.Close()
 		atomic.StoreInt64(&s.state, STATE_CLOSE)
-
-		debugLog("loop closed")
 	}()
 
 	// 接受消息
@@ -202,19 +198,14 @@ func (s *Smux) HandleLoop() {
 			case MSG_CONNECT:
 				// 加入 conn
 				conn := NewConn(msg.ConnId, s)
+				s.accepts <- msg.ConnId
 
-				select {
-				case s.accepts <- msg.ConnId:
-					s.connsMu.Lock()
-					s.conns[msg.ConnId] = conn
-					s.connsMu.Unlock()
+				s.connsMu.Lock()
+				s.conns[msg.ConnId] = conn
+				s.connsMu.Unlock()
 
-					// 发送成功消息
-					s.sendBox <- &Msg{msg.ConnId, MSG_CONNECT_SUCCESS, 0, []byte{}}
-
-				default:
-					s.sendBox <- &Msg{msg.ConnId, MSG_CONNECT_ERROR, 0, []byte{}}
-				}
+				// 发送成功消息
+				s.sendBox <- &Msg{msg.ConnId, MSG_CONNECT_SUCCESS, 0, []byte{}}
 			case MSG_CONNECT_ERROR:
 				fallthrough
 			case MSG_CONNECT_SUCCESS:
@@ -270,7 +261,6 @@ func (s *Smux) recvMsg() (*Msg, error) {
 	header := make([]byte, 16)
 	_, err := io.ReadFull(s.conn, header)
 	if err != nil {
-		debugLog(s.mode, "read header failed")
 		return nil, err
 	}
 
@@ -283,7 +273,6 @@ func (s *Smux) recvMsg() (*Msg, error) {
 	if msg.Length > 0 {
 		_, err = io.ReadFull(s.conn, msg.Buff)
 		if err != nil {
-			debugLog(s.mode, "read content failed")
 			return nil, err
 		}
 	}
@@ -301,13 +290,9 @@ func (s *Smux) sendMsg(msg *Msg) error {
 
 	n, err := s.conn.Write(buff)
 	if err != nil {
-		panic("content send fail")
-		debugLog(s.mode, "content send failed")
 		return err
 	}
 	if n != len(buff) {
-		panic("content not full send")
-		debugLog(s.mode, "content not full send")
 		return errors.New("content not match")
 	}
 	return nil
