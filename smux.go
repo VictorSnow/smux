@@ -155,6 +155,14 @@ func (s *Smux) Dail() (*Conn, error) {
 }
 
 func (s *Smux) HandleLoop() {
+	// watch in case of error
+	defer func() {
+		if err = recover(); err != nil {
+			errorLog(err)
+			atomic.StoreInt64(&s.state, STATE_CLOSE)
+		}
+	}()
+
 	atomic.StoreInt64(&s.state, STATE_ACTIVE)
 
 	defer func() {
