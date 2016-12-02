@@ -190,8 +190,13 @@ func (s *Smux) HandleLoop() {
 	closeChan := make(chan int, 2)
 	defer close(closeChan)
 
+	wg := sync.WaitGroup{}
+	wg.Add(2)
+
 	// 接受消息
 	go func() {
+		defer wg.Done()
+
 		for {
 			defer func() {
 				closeChan <- 1
@@ -248,35 +253,40 @@ func (s *Smux) HandleLoop() {
 	}()
 
 	// 发送消息
-	for {
-		select {
-		case <-closeChan:
-			return
-		case msg := <-s.sendBox:
-		retry:
-			err := s.sendMsg(msg)
-			// retry to send msg
-			if istimeout(err) {
-				goto retry
-			}
+	go func() {
+		for {
+			defer wg.Done()
 
-			if err != nil {
-				errorLog("send conn failed", err)
+			select {
+			case <-closeChan:
 				return
-			}
-			// 如果是关闭连接
-			if msg.MsgType == MSG_CLOSE {
-				s.connsMu.Lock()
-				delete(s.conns, msg.ConnId)
-				s.connsMu.Unlock()
-			}
-		case <-time.After(s.keepAliveTimeout):
-			if s.mode == "client" {
-				msg := &Msg{0, MSG_KEEPALIVE, 0, []byte{}}
-				s.sendBox <- msg
+			case msg := <-s.sendBox:
+			retry:
+				err := s.sendMsg(msg)
+				// retry to send msg
+				if istimeout(err) {
+					goto retry
+				}
+
+				if err != nil {
+					errorLog("send conn failed", err)
+					return
+				}
+				// 如果是关闭连接
+				if msg.MsgType == MSG_CLOSE {
+					s.connsMu.Lock()
+					delete(s.conns, msg.ConnId)
+					s.connsMu.Unlock()
+				}
+			case <-time.After(s.keepAliveTimeout):
+				if s.mode == "client" {
+					msg := &Msg{0, MSG_KEEPALIVE, 0, []byte{}}
+					s.sendBox <- msg
+				}
 			}
 		}
-	}
+	}()
+	wg.Wait()
 }
 
 func (s *Smux) recvMsg() (*Msg, error) {
