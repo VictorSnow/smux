@@ -128,6 +128,10 @@ func (s *Smux) startClient() error {
 }
 
 func (s *Smux) Dail() (*Conn, error) {
+	if atomic.LoadInt64(&s.state) != STATE_ACTIVE {
+		return nil, errors.New("remote not success connected")
+	}
+
 	connId := atomic.AddUint64(&s.connId, s.idStep)
 	msg := &Msg{connId, MSG_CONNECT, 0, []byte{}}
 	s.sendBox <- msg
